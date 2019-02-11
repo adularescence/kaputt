@@ -17,10 +17,14 @@ client.on("ready", () => {
     game: { name: ";;help for help" },
     status: "idle"
   });
+  
 });
 
 var message_list_one_word_story = [];
 var listening_one_word_story = false;
+var record_member_status = false;
+var schlafen = {};
+var counter_schlafen = 0;
 
 client.on("message", (message) => {
   if (listening_one_word_story === true) {
@@ -44,6 +48,24 @@ client.on("message", (message) => {
   const cmd = args.shift().toLowerCase();
 
   switch(cmd) {
+    case "record": 
+      var guilds = client.guilds.array();
+      for (var i = 0; i < guilds.length; i++) {
+        if (guilds[i].id == message.guild.id) {
+          console.log(guilds[i].name);
+          record_member_status = true;
+          start_record(guilds[i]);
+        }
+      }
+      break;
+    case "stop":
+      record_member_status = false;
+      var embed = new RichEmbed().setTitle("In the past " + counter_schlafen + " seconds, you have played...");
+      for (var i = 0; i < schlafen.activity.length; i++) {
+        embed.addField(schlafen.activity[i].name, "For " + schlafen.activity[i].duration);
+      }
+      message.channel.send(embed);
+      break;
     case "delete":
       var limit = args.length === 0 ? 1 : args[0];
       async function clear() {
@@ -74,7 +96,9 @@ client.on("message", (message) => {
       break;
     case "bye":
       console.log(message.author.username + " killed me!");
+      record_member_status = false;
       client.destroy();
+      process.exit(0);
       break;
     case "start":
       listening_one_word_story = true;
@@ -122,3 +146,29 @@ client.on("messageReactionRemove", (messageReaction, user) => {
   messageReaction.message.channel.send("user " + user.username + " removed reaction " + messageReaction.emoji + " from message " + messageReaction.message.content);
 });
 
+function start_record(guild) {
+  schlafen = {
+    "activity": []
+  };
+  setInterval(async () => {
+    if (record_member_status == false) { 
+      return;
+    }
+    counter_schlafen++;
+    var game = guild.members.get(config.schlafen).presence.game;
+    game = game == null ? "nothing" : game.name;
+    var newGame = true;
+    for (var i = 0; i < schlafen.activity.length; i++) {
+      if (schlafen.activity[i].name == game) {
+        newGame = false;
+        schlafen.activity[i].duration++;
+      }
+    }
+    if (newGame) {
+      schlafen.activity.push({
+        "name": game,
+        "duration": 1
+      });
+    }
+  }, 1000);
+}
