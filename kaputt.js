@@ -27,18 +27,14 @@ var schlafen = {};
 var counter_schlafen = 0;
 
 client.on("message", (message) => {
-  if (listening_one_word_story === true) {
-    if (message.content === ";;end") {
+  if (listening_one_word_story === true) { 
+    if (message.content === ";;ows stop") {
       listening_one_word_story = false;
-      var msg = "";
-      for (var i = 0; i < message_list.length; i++) {
-        msg += message_list[i] + " ";
-      }
-      message.channel.send(new RichEmbed().setDescription(msg.trim())); 
+      message.content = ";;ows show"; 
+    } else if (message.content !== ";;ows show") {
+      message_list.push(message.content);
       return;
     }
-    message_list.push(message.content);
-    return;
   }
   if (message.author.bot || message.content.indexOf(config.prefix) !== 0) {
     return;
@@ -47,27 +43,87 @@ client.on("message", (message) => {
   const args = message.content.slice(config.prefix.length).trim().split(/ +/g);
   const cmd = args.shift().toLowerCase();
 
-  switch(cmd) {
-    case "record": 
-      var guilds = client.guilds.array();
-      for (var i = 0; i < guilds.length; i++) {
-        if (guilds[i].id == message.guild.id) {
-          console.log(guilds[i].name);
-          record_member_status = true;
-          start_record(guilds[i]);
+  switch (cmd) {
+    case "poll":
+      var options = [];
+      for (var i = 0; i < args.length;) {
+        var opt = "";
+        if (args[i].charAt(0) === "\"") {
+          var end_of_opt = false;
+          while (!end_of_opt) {
+            opt += args[i] + " "; 
+            if (args[i].charAt(args[i].length - 1) === "\"") {
+              end_of_opt = true;
+            }
+            i++;
+          } 
+        } else {
+          opt = args[i] + " ";
+          i++;
         }
+        options.push(opt.trim().replace(/\"/g, ""));
       }
+      if (options.length > 11) {
+        message.channel.send(new RichEmbed().setDescription("Too many options."));
+        show_help(message);
+        return;
+      } else if (options.length < 2) {
+        message.channel.send(new RichEmbed().setDescription("Not enough options."));
+      }
+      var number_emotes = [
+        "\u0030\u20E3", // 0
+        "\u0031\u20E3", // 1
+        "\u0032\u20E3", // 2
+        "\u0033\u20E3", // 3
+        "\u0034\u20E3", // 4
+        "\u0035\u20E3", // 5
+        "\u0036\u20E3", // 6
+        "\u0037\u20E3", // 7
+        "\u0038\u20E3", // 8
+        "\u0039\u20E3"  // 9
+      ];
+      var embed = new RichEmbed();
+      embed.setTitle(options[0]);
+      for (var i = 1; i < options.length; i++) {
+        embed.addField(number_emotes[i - 1], options[i]);
+      }
+      message.channel.send(embed)
+        .then(message => {
+          for (var i = 0; i < options.length - 1; i++) {
+            message.react(number_emotes[i]); 
+          }
+        });
       break;
-    case "stop":
-      record_member_status = false;
-      var embed = new RichEmbed().setTitle("In the past " + counter_schlafen + " seconds, you have played...");
-      for (var i = 0; i < schlafen.activity.length; i++) {
-        embed.addField(schlafen.activity[i].name, "For " + schlafen.activity[i].duration);
+    case "record":
+      if (args[0] === "start") {
+        var guilds = client.guilds.array();
+        for (var i = 0; i < guilds.length; i++) {
+          if (guilds[i].id == message.guild.id) {
+            console.log(guilds[i].name);
+            record_member_status = true;
+            start_record(guilds[i]);
+          }
+        }
+      } else if (args[0] === "stop" || args[0] === "show") {
+        if (cmd[0] === "stop") {
+          record_member_status = false;
+        }
+        var embed = new RichEmbed().setTitle("In the past " + counter_schlafen + " minutes, you have played...");
+        for (var i = 0; i < schlafen.activity.length; i++) {
+          embed.addField(schlafen.activity[i].name, "For " + schlafen.activity[i].duration);
+        }
+        message.channel.send(embed);
+      } else {
+        message.channel.send(new RichEmbed().setDescription("Bad subcommand for **;;record**"));
+        show_help(message);
       }
-      message.channel.send(embed);
       break;
     case "delete":
       var limit = args.length === 0 ? 1 : args[0];
+      if (limit > 99) {
+        message.channel.send(new RichEmbed().setDescription("You may only delete up to 99 messages at once."));
+        return;
+      }
       async function clear() {
         const fetched = await message.channel.fetchMessages({limit: ++limit});
         message.channel.bulkDelete(fetched);
@@ -100,34 +156,29 @@ client.on("message", (message) => {
       client.destroy();
       process.exit(0);
       break;
-    case "start":
-      listening_one_word_story = true;
-      message_list = []
-      break;
-    case "print":
-      var msg = "";
-      for (var i = 0; i < message_list.length; i++) {
-        msg += message_list[i] + " ";
+    case "ows":
+      switch (args[0]) {
+        case "show":
+          var msg = "";
+          for (var i = 0; i < message_list.length; i++) {
+            msg += message_list[i] + " ";
+          }
+          message.channel.send(new RichEmbed().setDescription(msg.trim()));
+          break;
+        case "start":
+          listening_one_word_story = true;
+          message_list = []
+          break;
+        default:
+          message.channel.send(new RichEmbed().setDescription("Bad subcommand for **;;ows**"));
+          show_help(message);
       }
-      message.channel.send(new RichEmbed().setDescription(msg.trim()));
       break;
     default:
       if (cmd !== "help") {
-        message.channel.send(new RichEmbed().setDescription("Bad command: ;;" + cmd));
+        message.channel.send(new RichEmbed().setDescription("Bad command: **;;" + cmd + "**"));
       }
-      var embed = new RichEmbed();
-      embed.setTitle("**Usable commands**");
-      embed.addField(";;avatar [@mention]", "shows your avatar (default), or the one of the mention");
-      embed.addField(";;bye", "kills me :cry:");
-      embed.addField(";;delete [number]", "deletes the commanding message, and [number] of messages before it (number needs to be less than 100)");
-      embed.addField(";;echo" , "repeats everything after ;;echo"); 
-      embed.addField(";;end", "finishes listening for one-word-story, and then displays it");
-      embed.addField(";;foo", "?");
-      embed.addField(";;help", "shows this");
-      embed.addField(";;ping", "?");
-      embed.addField(";;print", "shows the current one-word-story");
-      embed.addField(";;start", "begins listening for one-word-story");
-      message.channel.send(embed);
+      show_help(message);
   }
 });
 
@@ -140,9 +191,11 @@ client.on("typingStart", (channel, user) => {
 });
 
 client.on("messageReactionAdd", (messageReaction, user) => { 
+  if (user.bot) return;
   messageReaction.message.channel.send("user " + user.username + " reacted with " + messageReaction.emoji + " to message " + messageReaction.message.content);
 }); 
 client.on("messageReactionRemove", (messageReaction, user) => {
+  if (user.bot) return;
   messageReaction.message.channel.send("user " + user.username + " removed reaction " + messageReaction.emoji + " from message " + messageReaction.message.content);
 });
 
@@ -170,5 +223,26 @@ function start_record(guild) {
         "duration": 1
       });
     }
-  }, 1000);
+  }, 60000);
+}
+
+function show_help(message) {
+  var embed = new RichEmbed();
+  embed.setTitle("**Usable commands**");
+  embed.setDescription("**;;command** ***subcommand*** [choose one] _argument_ _?optional argument?_");
+  embed.addField("**;;avatar** _?@mention?_", "shows your avatar (default), or the avatar of the mention");
+  embed.addField("**;;bye**", "kills me :cry:");
+  embed.addField("**;;delete** _?number?_",
+    "delete the commanding message, the previous message (default), or _number_ previous messages (up to 99)");
+  embed.addField("**;;echo**" , "repeats everything after **;;echo**");
+  embed.addField("**;;foo**", "?");
+  embed.addField("**;;help**", "shows this");
+  embed.addField("**;;ows** ***[show start stop]***",
+    "\n***show:*** shows the current one word story" +
+    "\n***start:*** begins listening for one-word-story" +
+    "\n***stop:*** finishes listening for one-word-story, and then shows it");
+  embed.addField("**;;ping**", "?");
+  embed.addField("**;;poll** _query_ _opt0_ _opt1_ _?opt2?_ _?opt3?_ ... _?opt9?_", "make a poll with the given query and options (up to 10 options)");
+  embed.addField("**;;record** ***[show start stop]***", "Records activities by the minute. Only works for meeeeeeee (for now)");
+  message.channel.send(embed);
 }
