@@ -2,9 +2,6 @@ const Discord = require("discord.js")
 const RichEmbed = Discord.RichEmbed;
 const Guild = Discord.Guild;
 
-const http = require("http");
-const request = require("request");
-
 const config = require("./bot_config.json");
 const auth = require("./auth.json");
 
@@ -16,8 +13,7 @@ client.on("ready", () => {
   client.user.setPresence({
     game: { name: ";;help for help" },
     status: "idle"
-  });
-  
+  });  
 });
 
 var message_list_one_word_story = [];
