@@ -8,31 +8,60 @@ const auth = require("./auth.json");
 const client = new Discord.Client();
 client.login(auth.token);
 
-client.on("ready", () => {
-  console.log("I am ready!");
-  client.user.setPresence({
-    game: { name: ";;help for help" },
-    status: "idle"
-  });  
-});
+const help_embed = new RichEmbed()
+  .setTitle("**Usable commands**")
+  .setDescription("**" + config.prefix + "command** ***subcommand*** [choose one] _argument_ _?optional argument?_")
+  .addField("**" + config.prefix + "avatar** _?@mention?_", "shows your avatar (default), or the avatar of the mention")
+  .addField("**" + config.prefix + "bye**", "kills me :cry:")
+  .addField("**" + config.prefix + "delete** _?number?_",
+    "delete the commanding message, the previous message (default), or _number_ previous messages (up to 99)")
+  .addField("**" + config.prefix + "echo**" , "repeats everything after **" + config.prefix + "echo**")
+  .addField("**" + config.prefix + "foo**", "?")
+  .addField("**" + config.prefix + "help**", "shows this")
+  .addField("**" + config.prefix + "story** ***[show {start <words>} stop]***",
+    "\n***show:*** shows the most recent or current <words>-word-story" +
+    "\n***start <words>:*** begins listening for a new <words>-word-story" +
+    "\n***stop:*** finishes listening for <words>-word-story, and then shows it")
+  .addField("**" + config.prefix + "ping**", "?")
+  .addField("**" + config.prefix + "poll** _query_ _opt0_ _opt1_ _?opt2?_ _?opt3?_ ... _?opt9?_", "make a poll with the given query and options (up to 10 options)")
+  .addField("**" + config.prefix + "record** ***[show start stop]***", "Records activities by the minute. Only works for meeeeeeee (for now)");
 
-var message_list_one_word_story = [];
-var listening_one_word_story = false;
+// <words>-word-story vars
+var story_word_allowance = -1;
+var story_list = [];
+var story_listening = false;
+
+// record my (for now) activity vars
 var record_member_status = false;
 var schlafen = {};
 var counter_schlafen = 0;
 
+client.on("ready", () => {
+  console.log("I am ready!");
+  client.user.setPresence({
+    game: { name: "" + config.prefix + "help for help" },
+    status: "online"
+  });  
+});
+
 client.on("message", (message) => {
-  if (listening_one_word_story === true) { 
-    if (message.content === ";;ows stop") {
-      listening_one_word_story = false;
-      message.content = ";;ows show"; 
-    } else if (message.content !== ";;ows show") {
-      message_list.push(message.content);
-      return;
+  if (message.author.bot) {
+    return;
+  }
+  if (story_listening === true) { 
+    if (message.content === "" + config.prefix + "story stop") {
+      story_listening = false;
+      message.content = "" + config.prefix + "story show";
+    } else if (message.content !== "" + config.prefix + "story show") {
+      if (message.content.split(/ +/g).length !== story_word_allowance) {
+        message.reply("you must use " + story_word_allowance + " words my dude");
+      } else {
+        story_list.push(message.content);
+        return;
+      }
     }
   }
-  if (message.author.bot || message.content.indexOf(config.prefix) !== 0) {
+  if (message.content.indexOf(config.prefix) !== 0) {
     return;
   }
 
@@ -61,10 +90,10 @@ client.on("message", (message) => {
       }
       if (options.length > 11) {
         message.channel.send(new RichEmbed().setDescription("Too many options."));
-        show_help(message);
         return;
       } else if (options.length < 2) {
         message.channel.send(new RichEmbed().setDescription("Not enough options."));
+        return;
       }
       var number_emotes = [
         "\u0030\u20E3", // 0
@@ -110,8 +139,7 @@ client.on("message", (message) => {
         }
         message.channel.send(embed);
       } else {
-        message.channel.send(new RichEmbed().setDescription("Bad subcommand for **;;record**"));
-        show_help(message);
+        message.channel.send("Bad subcommand for **" + config.prefix + "record**", help_embed);
       }
       break;
     case "delete":
@@ -122,7 +150,10 @@ client.on("message", (message) => {
       }
       async function clear() {
         const fetched = await message.channel.fetchMessages({limit: ++limit});
-        message.channel.bulkDelete(fetched);
+        message.channel.bulkDelete(fetched)
+        .catch(() => {
+          message.channel.send(new RichEmbed().setDescription("Some of the messages to delete are more than 2 weeks old.\nA limitation in Discord's API prevents me from deleting messages older than that!"))
+        });
       }
       clear();
       break;
@@ -141,40 +172,56 @@ client.on("message", (message) => {
       if (args.length === 0) {
         embed.setImage(message.author.avatarURL);
       } else {
-        var member = client.users.get(message.mentions.users.first().id);
-        embed.setImage(member.avatarURL); 
+        var mention = message.mentions.users.first();
+        if (typeof mention !== "undefined") {
+          embed.setImage(client.users.get(mention.id).avatarURL);
+        } else {
+          embed.setDescription("User not found!");
+        }
       } 
       message.channel.send(embed); 
       break;
     case "bye":
-      console.log(message.author.username + " killed me!");
-      record_member_status = false;
-      client.destroy();
-      process.exit(0);
-      break;
-    case "ows":
+      message.channel.send(new RichEmbed().setDescription("<@" + message.author.id + "> killed me!"))
+      .then(() => {
+        record_member_status = false;
+        console.log(message.author.username + " killed me!");
+        client.destroy();
+        process.exit(0);
+      });
+    case "story":
       switch (args[0]) {
         case "show":
-          var msg = "";
-          for (var i = 0; i < message_list.length; i++) {
-            msg += message_list[i] + " ";
+          if (story_list.length === 0) {
+            message.channel.send(new RichEmbed().setDescription("There has yet to be a story since this bot was booted up, or the previous story was blank."));
+          } else {
+            var msg = "";
+            for (var i = 0; i < story_list.length; i++) {
+              msg += story_list[i] + " ";
+            }
+            message.channel.send("Previously on " + story_word_allowance + "-word-story:", new RichEmbed().setDescription(msg.trim()));
           }
-          message.channel.send(new RichEmbed().setDescription(msg.trim()));
           break;
         case "start":
-          listening_one_word_story = true;
-          message_list = []
+          story_word_allowance = parseInt(args[1], 10);
+          if (!Number.isNaN(story_word_allowance) && story_word_allowance > 0) {
+            story_listening = true;
+            story_list = []
+            message.channel.send(new RichEmbed().setDescription("New " + story_word_allowance + " word story. Listening..."));
+          } else {
+            message.channel.send(new RichEmbed().setDescription("You need to specify >0 words for <words>-word-story (i.e. **" + config.prefix + "story start 4** for four-word-story)"));
+          }
           break;
         default:
-          message.channel.send(new RichEmbed().setDescription("Bad subcommand for **;;ows**"));
-          show_help(message);
+          message.channel.send("Bad subcommand for **" + config.prefix + "story**", help_embed);
       }
       break;
     default:
       if (cmd !== "help") {
-        message.channel.send(new RichEmbed().setDescription("Bad command: **;;" + cmd + "**"));
+        message.channel.send("Bad command: **" + config.prefix + cmd + "**", help_embed);
+      } else {
+        message.channel.send(help_embed);
       }
-      show_help(message);
   }
 });
 
@@ -220,25 +267,4 @@ function start_record(guild) {
       });
     }
   }, 60000);
-}
-
-function show_help(message) {
-  var embed = new RichEmbed();
-  embed.setTitle("**Usable commands**");
-  embed.setDescription("**;;command** ***subcommand*** [choose one] _argument_ _?optional argument?_");
-  embed.addField("**;;avatar** _?@mention?_", "shows your avatar (default), or the avatar of the mention");
-  embed.addField("**;;bye**", "kills me :cry:");
-  embed.addField("**;;delete** _?number?_",
-    "delete the commanding message, the previous message (default), or _number_ previous messages (up to 99)");
-  embed.addField("**;;echo**" , "repeats everything after **;;echo**");
-  embed.addField("**;;foo**", "?");
-  embed.addField("**;;help**", "shows this");
-  embed.addField("**;;ows** ***[show start stop]***",
-    "\n***show:*** shows the current one word story" +
-    "\n***start:*** begins listening for one-word-story" +
-    "\n***stop:*** finishes listening for one-word-story, and then shows it");
-  embed.addField("**;;ping**", "?");
-  embed.addField("**;;poll** _query_ _opt0_ _opt1_ _?opt2?_ _?opt3?_ ... _?opt9?_", "make a poll with the given query and options (up to 10 options)");
-  embed.addField("**;;record** ***[show start stop]***", "Records activities by the minute. Only works for meeeeeeee (for now)");
-  message.channel.send(embed);
 }
