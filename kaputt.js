@@ -5,18 +5,36 @@ const Guild = Discord.Guild;
 const config = require("./bot_config.json");
 const auth = require("./auth.json");
 
-const client = new Discord.Client();
-client.login(auth.token);
+const discord_client = new Discord.Client();
+discord_client.login(auth.token);
 
 const nh = require("nhentai-js");
 const Danbooru = require("danbooru");
 const booru = new Danbooru(auth.danbooru_login + ":" + auth.danbooru_api);
+
+const Postgres = require("pg");
+// const pg_pool = new Pool({
+//   user: "kaputt",
+//   host: "localhost",
+//   database: "kaputt_db",
+//   password: auth.pg_password,
+//   port: auth.pg_port
+// });
+const pg_client = new Postgres.Client({
+  user: "kaputt",
+  host: "localhost",
+  database: "kaputt_db",
+  password: auth.pg_password,
+  port: auth.pg_port
+});
+pg_client.connect();
 
 const help_embed = new RichEmbed()
   .setTitle("**Usable commands**")
   .setDescription("**" + config.prefix + "command** ***subcommand*** [choose one] _argument_ _?optional argument?_")
   .addField("**" + config.prefix + "avatar** _?@mention?_", "shows your avatar (default), or the avatar of the mention")
   .addField("**" + config.prefix + "bye**", "kills me :cry:")
+  .addField(`**${config.prefix}db** ***[insert select]***`, `figuring this thing out`)
   .addField("**" + config.prefix + "delete** _?number?_",
     "delete the commanding message, the previous message (default), or _number_ previous messages (up to 99)")
   .addField("**" + config.prefix + "echo**" , "repeats everything after **" + config.prefix + "echo**")
@@ -30,26 +48,33 @@ const help_embed = new RichEmbed()
   .addField("**" + config.prefix + "poll** _query_ _opt0_ _opt1_ _?opt2?_ _?opt3?_ ... _?opt9?_", "make a poll with the given query and options (up to 10 options)")
   .addField("**" + config.prefix + "record** ***[show start stop]***", "Records activities by the minute. Only works for meeeeeeee (for now)");
 
-// <words>-word-story vars
+// <words>-word-story variables
 let story_word_allowance = -1;
 const story_list = [];
 let story_listening = false;
 
-// record my (for now) activity vars
+// record the activities of members on my test server (for now)
 let record_member_status = false;
-let schlafen = {};
-let counter_schlafen = 0;
+const record_members = [];
+let minutes_since_start = 0;
 
-client.on("ready", () => {
+discord_client.on("ready", () => {
   console.log("I am ready!");
-  client.user.setPresence({
+  discord_client.user.setPresence({
     game: { name: "" + config.prefix + "help for help" },
     status: "online"
   });  
 });
 
-client.on("message", (message) => {
-  // console.log(message);
+discord_client.on("message", (message) => {
+  // record messages
+  const text = "INSERT INTO test_server_messages (id, author_id, content, timestamp) VALUES ($1, $2, $3, $4) RETURNING *";
+  const values = [message.id, message.author.id, message.content, message.createdTimestamp];
+  pg_client.query(text, values)
+  .then(res => {
+    res.rows.forEach(entry => console.log(entry));
+  })
+  .catch(e => console.log(e.stack));
 
   // ignore bots
   if (message.author.bot) return;
@@ -108,7 +133,7 @@ client.on("message", (message) => {
       .then(() => {
         record_member_status = false;
         console.log(message.author.username + " killed me!");
-        client.destroy();
+        discord_client.destroy();
         process.exit(0);
       });
     case "story":
@@ -120,6 +145,9 @@ client.on("message", (message) => {
     case "danbooru":
       command_danbooru(message, args);
       break;
+    case "db":
+      command_db(message, args);
+      break;
     default:
       if (cmd !== "help") {
         message.channel.send(`Bad command: **${config.prefix}${cmd}**`, help_embed);
@@ -129,51 +157,24 @@ client.on("message", (message) => {
   }
 });
 
-client.on("messageDelete", (message) => {
+discord_client.on("messageDelete", (message) => {
   console.log(message.content); 
 });
 
-client.on("typingStart", (channel, user) => {
+discord_client.on("typingStart", (channel, user) => {
   console.log(`${user.username} is typing in ${channel.name}`);
 });
 
-client.on("messageReactionAdd", (messageReaction, user) => { 
+discord_client.on("messageReactionAdd", (messageReaction, user) => { 
   if (user.bot) return;
   messageReaction.message.channel.send("user " + user.username + " reacted with " + messageReaction.emoji + " to message " + messageReaction.message.content);
 }); 
-client.on("messageReactionRemove", (messageReaction, user) => {
+discord_client.on("messageReactionRemove", (messageReaction, user) => {
   if (user.bot) return;
   messageReaction.message.channel.send("user " + user.username + " removed reaction " + messageReaction.emoji + " from message " + messageReaction.message.content);
 });
 
 // Command functions
-
-const start_record = (guild) => {
-  schlafen = {
-    "activity": []
-  };
-  setInterval(async () => {
-    if (record_member_status == false) { 
-      return;
-    }
-    counter_schlafen++;
-    let game = guild.members.get(config.schlafen).presence.game;
-    game = game == null ? "nothing" : game.name;
-    let newGame = true;
-    for (let i = 0; i < schlafen.activity.length; i++) {
-      if (schlafen.activity[i].name == game) {
-        newGame = false;
-        schlafen.activity[i].duration++;
-      }
-    }
-    if (newGame) {
-      schlafen.activity.push({
-        "name": game,
-        "duration": 1
-      });
-    }
-  }, 60000);
-}
 
 const command_poll = (message, args) => {
   const options = [];
@@ -221,35 +222,84 @@ const command_poll = (message, args) => {
   }
   message.channel.send(embed)
   .then(message => {
-    for (let i = 0; i < options.length - 1; i++) {
-      message.react(number_emotes[i]); 
+    // will react with the number emotes in correct order
+    const sequential_react = async () => {
+      for (let i = 0; i < options.length - 1; i++) await message.react(number_emotes[i]);
     }
+    sequential_react();
   });
 }
 
 const command_record = (message, args) => {
   if (args[0] === "start") {
-    const guilds = client.guilds.array();
-    for (let i = 0; i < guilds.length; i++) {
-      if (guilds[i].id == message.guild.id) {
-        // TODO debug
-        console.log(guilds[i].name);
-        record_member_status = true;
-        start_record(guilds[i]);
-      }
+    if (message.guild.id !== config.test_guild) {
+      message.channel.send(new RichEmbed().setTitle("Sorry, right now recording available only for my test server."));
+      return;
     }
+    record_member_status = true;
+    console.log(message.guild.name);
+    start_record(message.guild);
+    // const guilds = discord_client.guilds.array();
+    // for (let i = 0; i < guilds.length; i++) {
+    //   if (guilds[i].id == message.guild.id) {
+    //     // TODO debug
+    //     console.log(guilds[i].name);
+    //     record_member_status = true;
+    //     start_record(guilds[i]);
+    //   }
+    // }
   } else if (args[0] === "stop" || args[0] === "show") {
-    if (cmd[0] === "stop") {
+    if (record_members.length === 0) {
+      message.channel.send(new RichEmbed().setTitle("Nothing has been recorded yet..."));
+      return;
+    }
+    if (args[0] === "stop") {
       record_member_status = false;
     }
-    const embed = new RichEmbed().setTitle("In the past " + counter_schlafen + " minutes, you have played...");
-    for (let i = 0; i < schlafen.activity.length; i++) {
-      embed.addField(schlafen.activity[i].name, "For " + schlafen.activity[i].duration);
-    }
+    const embed = new RichEmbed().setTitle("In the past " + minutes_since_start + " minutes, the members on this server have played...");
+    record_members.forEach(member => {
+      let text = "";
+      member.activities.forEach(activity => {
+        text += activity.name + " for " + activity.duration + "\n";
+      });
+      embed.addField(member.username, text);
+    });
     message.channel.send(embed);
   } else {
     message.channel.send("Bad subcommand for **" + config.prefix + "record**", help_embed);
   }
+}
+
+const start_record = (guild) => {
+  guild.members.forEach(member => record_members.push({username: member.user.username, id: member.user.id, activities: [] }));
+  setInterval(async () => {
+    if (record_member_status == false) { 
+      return;
+    }
+    minutes_since_start++;
+    guild.members.forEach(guild_member => {
+      let game = guild_member.presence.game;
+      game = game === null ? "nothing": game.name;
+      let newGame = true;
+      record_members.forEach(member => {
+        if (member.id === guild_member.id) {
+          for (let i = 0; i < member.activities.length; i++) {
+            if (member.activities[i].name === game) {
+              newGame = false;
+              member.activities[i].duration++;
+            }
+          }
+          if (newGame) {
+            member.activities.push({
+              "name": game,
+              "duration": 1
+            });
+          }
+        }
+      });
+    });
+    //bogus_code(guild);
+  }, 60000);
 }
 
 const command_delete = (message, args) => {
@@ -300,7 +350,7 @@ const command_avatar = (message, args) => {
   } else {
     const mention = message.mentions.users.first();
     if (typeof mention !== "undefined") {
-      embed.setImage(client.users.get(mention.id).avatarURL);
+      embed.setImage(discord_client.users.get(mention.id).avatarURL);
     } else {
       embed.setDescription("User not found!");
     }
@@ -370,5 +420,91 @@ const command_nh = (message, args) => {
   .catch(error => {
     console.error(error);
     message.channel.send(new RichEmbed().setTitle("No gallery found for " + args[0]));
+  });
+}
+
+const command_db = (message, args) => {
+  switch (args[0]) {
+    case "select":
+      pg_client.query("SELECT * FROM command_record_test", (err, res) => {
+        res.rows.forEach(entry => message.channel.send(`https://cdn.discordapp.com/avatars/${entry.id}/${entry.avatar}.png?size=2048`));
+      });
+      break;
+    case "insert":
+      if (message.author.id !== config.schlafen) return;
+      // const text = "INSERT INTO test_table(id, name, age, address, salary) VALUES ($1, $2, $3, $4, $5) RETURNING *";
+      // const values = args.slice(1, args.length);
+      // pg_client.query(text, values)
+      // .then(res => {
+      //   console.log(res.rows[0]);
+      // })
+      // .catch(e => console.error(e.stack));
+      const insert_text = "INSERT INTO command_record_test (id, username, discriminator, avatar) VALUES ($1, $2, $3, $4) RETURNING *";
+      const insert_values = [message.author.id, message.author.username, message.author.discriminator, message.author.avatar];
+      pg_client.query(insert_text, insert_values)
+      .then(res => {
+        res.rows.forEach(entry => console.log(entry));
+      })
+      .catch(e => console.error(e.stack));
+      break;
+    case "update":
+      const update_text = "SELECT * FROM guild_" + config.test_guild + "_member_activities_test";
+      pg_client.query(update_text)
+      .then(res => {
+        res.rows.forEach(entry => {
+          console.log(entry.activities);
+          let parsed_activities = [];
+          entry.activities.forEach(activity => {
+            parsed_activities.push({
+              name: activity.name,
+              duration: activity.duration
+            });
+          });
+          record_members.push({
+            id: entry.id,
+            username: entry.username,
+            activities: parsed_activities
+          });
+        });
+        console.log(record_members);
+      })
+      .catch(e => console.log(e.stack));
+      break;
+    // case "delete":
+    //   pg_client.query("DELETE FROM test_table WHERE id = " + args[1])
+    //   .then(res => console.log)
+    //   .catch(e => console.error(e.stack));
+    // case "kill":
+    //   pg_client.end();
+    //   break;
+    // case "debug":
+    //   console.log(message.author);
+    //   break;
+    default:
+      message.channel.send("bad command");
+  }
+}
+
+const bogus_code = (guild) => {
+  // psql create table
+  // certified working 100% - May 17, 2019
+  // if (message.author.id !== config.schlafen) return;
+  // let guild_id = "";
+  // discord_client.guilds.forEach(guild => {
+  //   if (message.guild.id === guild.id) guild_id = guild.id;
+  // });
+  // const create_text = "CREATE TABLE guild_" + message.guild.id + "_member_activities_test (id TEXT PRIMARY KEY, username TEXT NOT NULL, activities JSONB NOT NULL)"
+  // pg_client.query(create_text)
+  // .then(res => console.log(res))
+  // .catch(e => console.log(e.stack));
+  // break;
+  console.log(JSON.stringify(record_members[0].activities));
+  const update_text = "INSERT INTO guild_" + guild.id + "_member_activities_test (id, username, activities) VALUES ($1, $2, $3) RETURNING *";
+  record_members.forEach(member => {
+    pg_client.query(update_text, [member.id, member.username, JSON.stringify(member.activities)])
+    .then(res => {
+      console.log(res.rows[0]);
+    })
+    .catch(e => console.log(e.stack));
   });
 }
