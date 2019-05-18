@@ -30,23 +30,23 @@ const pg_client = new Postgres.Client({
 pg_client.connect();
 
 const help_embed = new RichEmbed()
-  .setTitle("**Usable commands**")
-  .setDescription("**" + config.prefix + "command** ***subcommand*** [choose one] _argument_ _?optional argument?_")
-  .addField("**" + config.prefix + "avatar** _?@mention?_", "shows your avatar (default), or the avatar of the mention")
-  .addField("**" + config.prefix + "bye**", "kills me :cry:")
-  .addField(`**${config.prefix}db** ***[insert select]***`, `figuring this thing out`)
-  .addField("**" + config.prefix + "delete** _?number?_",
-    "delete the commanding message, the previous message (default), or _number_ previous messages (up to 99)")
-  .addField("**" + config.prefix + "echo**" , "repeats everything after **" + config.prefix + "echo**")
-  .addField("**" + config.prefix + "foo**", "?")
-  .addField("**" + config.prefix + "help**", "shows this")
-  .addField("**" + config.prefix + "story** ***[show {start <words>} stop]***",
-    "\n***show:*** shows the most recent or current <words>-word-story" +
-    "\n***start <words>:*** begins listening for a new <words>-word-story" +
-    "\n***stop:*** finishes listening for <words>-word-story, and then shows it")
-  .addField("**" + config.prefix + "ping**", "?")
-  .addField("**" + config.prefix + "poll** _query_ _opt0_ _opt1_ _?opt2?_ _?opt3?_ ... _?opt9?_", "make a poll with the given query and options (up to 10 options)")
-  .addField("**" + config.prefix + "record** ***[show start stop]***", "Records activities by the minute. Only works for meeeeeeee (for now)");
+.setTitle("**Usable commands**")
+.setDescription("**" + config.prefix + "command** ***subcommand*** [choose one] _argument_ _?optional argument?_")
+.addField("**" + config.prefix + "avatar** _?@mention?_", "shows your avatar (default), or the avatar of the mention")
+.addField("**" + config.prefix + "bye**", "kills me :cry:")
+.addField(`**${config.prefix}db** ***[insert select]***`, `figuring this thing out`)
+.addField("**" + config.prefix + "delete** _?number?_",
+  "delete the commanding message, the previous message (default), or _number_ previous messages (up to 99)")
+.addField("**" + config.prefix + "echo**" , "repeats everything after **" + config.prefix + "echo**")
+.addField("**" + config.prefix + "foo**", "?")
+.addField("**" + config.prefix + "help**", "shows this")
+.addField("**" + config.prefix + "story** ***[show {start <words>} stop]***",
+  "\n***show:*** shows the most recent or current <words>-word-story" +
+  "\n***start <words>:*** begins listening for a new <words>-word-story" +
+  "\n***stop:*** finishes listening for <words>-word-story, and then shows it")
+.addField("**" + config.prefix + "ping**", "?")
+.addField("**" + config.prefix + "poll** _query_ _opt0_ _opt1_ _?opt2?_ _?opt3?_ ... _?opt9?_", "make a poll with the given query and options (up to 10 options)")
+.addField("**" + config.prefix + "record** ***[show start stop]***", "Records activities by the minute. Only works for meeeeeeee (for now)");
 
 // <words>-word-story variables
 let story_word_allowance = -1;
@@ -55,7 +55,7 @@ let story_listening = false;
 
 // record the activities of members on my test server (for now)
 let record_member_status = false;
-const record_members = [];
+const record_map = new Map();
 let minutes_since_start = 0;
 
 discord_client.on("ready", () => {
@@ -169,6 +169,7 @@ discord_client.on("messageReactionAdd", (messageReaction, user) => {
   if (user.bot) return;
   messageReaction.message.channel.send("user " + user.username + " reacted with " + messageReaction.emoji + " to message " + messageReaction.message.content);
 }); 
+
 discord_client.on("messageReactionRemove", (messageReaction, user) => {
   if (user.bot) return;
   messageReaction.message.channel.send("user " + user.username + " removed reaction " + messageReaction.emoji + " from message " + messageReaction.message.content);
@@ -298,6 +299,7 @@ const start_record = (guild) => {
         }
       });
     });
+    // call the ;db update code here
     //bogus_code(guild);
   }, 60000);
 }
@@ -426,19 +428,14 @@ const command_nh = (message, args) => {
 const command_db = (message, args) => {
   switch (args[0]) {
     case "select":
+      // shows all the avatars collected from ;db insert
       pg_client.query("SELECT * FROM command_record_test", (err, res) => {
         res.rows.forEach(entry => message.channel.send(`https://cdn.discordapp.com/avatars/${entry.id}/${entry.avatar}.png?size=2048`));
       });
       break;
     case "insert":
-      if (message.author.id !== config.schlafen) return;
-      // const text = "INSERT INTO test_table(id, name, age, address, salary) VALUES ($1, $2, $3, $4, $5) RETURNING *";
-      // const values = args.slice(1, args.length);
-      // pg_client.query(text, values)
-      // .then(res => {
-      //   console.log(res.rows[0]);
-      // })
-      // .catch(e => console.error(e.stack));
+      // right now, inserts user id and avatar into a table, which can be retrieved using ;db select
+      // if (message.author.id !== config.schlafen) return;
       const insert_text = "INSERT INTO command_record_test (id, username, discriminator, avatar) VALUES ($1, $2, $3, $4) RETURNING *";
       const insert_values = [message.author.id, message.author.username, message.author.discriminator, message.author.avatar];
       pg_client.query(insert_text, insert_values)
@@ -447,28 +444,69 @@ const command_db = (message, args) => {
       })
       .catch(e => console.error(e.stack));
       break;
-    case "update":
-      const update_text = "SELECT * FROM guild_" + config.test_guild + "_member_activities_test";
-      pg_client.query(update_text)
+    case "populate":
+      // populate record_map with preexisting data
+      pg_client.query("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'")
       .then(res => {
         res.rows.forEach(entry => {
-          console.log(entry.activities);
-          let parsed_activities = [];
-          entry.activities.forEach(activity => {
-            parsed_activities.push({
-              name: activity.name,
-              duration: activity.duration
-            });
-          });
-          record_members.push({
-            id: entry.id,
-            username: entry.username,
-            activities: parsed_activities
-          });
+          // may need to change to regex
+          if (entry.table_name.startsWith("guild_")) {
+            //console.log(entry.table_name.match(/[0-9]+/g)[0]);
+            record_map.set(entry.table_name.match(/[0-9]+/g)[0], []);
+          }
         });
-        console.log(record_members);
+
+        for (let guild of record_map.keys()) {
+          pg_client.query(`SELECT * FROM guild_${guild}_member_activities_test`)
+          .then(res => {
+            res.rows.forEach(entry => {
+              let parsed_activities = [];
+              entry.activities.forEach(activity => {
+                parsed_activities.push({
+                  name: activity.name,
+                  duration: activity.duration
+                });
+              });
+              record_map.get(guild).push({
+                id: entry.id,
+                username: entry.username,
+                activities: parsed_activities
+              });
+            });
+
+            record_map.forEach(data => {
+              console.log(data);
+            });
+          })
+          .catch(e => console.log(e.stack));
+        }
       })
       .catch(e => console.log(e.stack));
+      break;
+    case "update":
+      // broken right now, skip
+      return;
+      // add code that updates all guilds' activity tables
+      // psql create table
+      // certified working 100% - May 17, 2019
+      // let guild_id = "";
+      // discord_client.guilds.forEach(guild => {
+      //   if (message.guild.id === guild.id) guild_id = guild.id;
+      // });
+      // const create_text = "CREATE TABLE guild_" + message.guild.id + "_member_activities_test (id TEXT PRIMARY KEY, username TEXT NOT NULL, activities JSONB NOT NULL)"
+      // pg_client.query(create_text)
+      // .then(res => console.log(res))
+      // .catch(e => console.log(e.stack));
+      // break;
+      console.log(JSON.stringify(record_members[0].activities));
+      const update_text = "INSERT INTO guild_" + guild.id + "_member_activities_test (id, username, activities) VALUES ($1, $2, $3) RETURNING *";
+      record_members.forEach(member => {
+        pg_client.query(update_text, [member.id, member.username, JSON.stringify(member.activities)])
+        .then(res => {
+          console.log(res.rows[0]);
+        })
+        .catch(e => console.log(e.stack));
+      });
       break;
     // case "delete":
     //   pg_client.query("DELETE FROM test_table WHERE id = " + args[1])
@@ -477,34 +515,7 @@ const command_db = (message, args) => {
     // case "kill":
     //   pg_client.end();
     //   break;
-    // case "debug":
-    //   console.log(message.author);
-    //   break;
     default:
       message.channel.send("bad command");
   }
-}
-
-const bogus_code = (guild) => {
-  // psql create table
-  // certified working 100% - May 17, 2019
-  // if (message.author.id !== config.schlafen) return;
-  // let guild_id = "";
-  // discord_client.guilds.forEach(guild => {
-  //   if (message.guild.id === guild.id) guild_id = guild.id;
-  // });
-  // const create_text = "CREATE TABLE guild_" + message.guild.id + "_member_activities_test (id TEXT PRIMARY KEY, username TEXT NOT NULL, activities JSONB NOT NULL)"
-  // pg_client.query(create_text)
-  // .then(res => console.log(res))
-  // .catch(e => console.log(e.stack));
-  // break;
-  console.log(JSON.stringify(record_members[0].activities));
-  const update_text = "INSERT INTO guild_" + guild.id + "_member_activities_test (id, username, activities) VALUES ($1, $2, $3) RETURNING *";
-  record_members.forEach(member => {
-    pg_client.query(update_text, [member.id, member.username, JSON.stringify(member.activities)])
-    .then(res => {
-      console.log(res.rows[0]);
-    })
-    .catch(e => console.log(e.stack));
-  });
 }
