@@ -1,8 +1,10 @@
-TODO
+# kaputt
 
-implement activity monitoring for all servers that this bot is on
-load stored activity data on startup for all servers
-clean up logic for activity monitoring
+### Implemented Features
 
-implement activity monitoring for my user, then for all users on server
-add persistence, figure out postgresql
+  * I will populate this later
+  
+### TODO
+
+  * passive + active activity recording
+  * containerize
