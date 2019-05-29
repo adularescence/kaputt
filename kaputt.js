@@ -53,49 +53,57 @@ let story_word_allowance = -1;
 const story_list = [];
 let story_listening = false;
 
-// deprecated soon
-const record_map = new Map();
-
 // record maps
 const active_record_map = new Map();
 const passive_record_map = new Map();
 
 discord_client.on("ready", () => {
-  console.log("I am ready!");
   discord_client.user.setPresence({
     game: { name: "" + config.prefix + "help for help" },
     status: "online"
   });
 
-  // initialize the active recording map
-  discord_client.guilds.forEach(guild => {
-    active_record_map.set(guild.id, new Map());
-    guild.members.forEach(member => {
-      active_record_map.get(guild.id).set(member.user.id, {
-        recording: false,
-        time: 0,
-        username: member.user.username,
-        activities: new Map()
-      });
-    });
+  // populate passive recording map from database
+  discord_client.users.forEach(user => {
+    passive_record_map.set(user.id, new Map());
+    pg_client.query(`SELECT EXISTS (SELECT * FROM informaton_schema.tables WHERE table_schema = 'kaputt_db' AND table_name = 'member_${user.id}_activities')`)
+    .then(res => {/*  */
+      if (res.rows[0] === true) {
+        pg_client.query(`SELECT * FROM user_${user.id}_activities`)
+        .then(res => {
+          res.rows.forEach(entry => {
+            passive_record_map.get(user.id).set(entry.time, entry.thing);
+          });
+        })
+        .catch(e => console.log(e.stack));
+      } else {
+        pg_client.query(`CREATE TABLE user_${user.id}_activities (
+          time TEXT PRIMARY KEY,
+          activity TEXT NOT NULL
+        )`)
+        .then(res => console.log(res))
+        .catch(e => console.log(e.stack));
+      }
+    })
+    .catch(e => console.log(e.stack));
   });
 
   // updates member status every 1 sec
   setInterval(async () => {
-    discord_client.guilds.forEach(guild => {
-      guild.members.forEach(member => {
-        if (active_record_map.get(guild.id).get(member.user.id).recording) {
-          let game = member.presence.game === null ? "nothing" : member.presence.game.name;
-          active_record_map.get(guild.id).get(member.user.id).time++;
-          if (active_record_map.get(guild.id).get(member.user.id).activities.has(game)) {
-            active_record_map.get(guild.id).get(member.user.id).activities.set(game, active_record_map.get(guild.id).get(member.user.id).activities.get(game) + 1);
-          } else {
-            active_record_map.get(guild.id).get(member.user.id).activities.set(game, 1);
-          }
+    // active recording
+    active_record_map.forEach(member => {
+      if (member.recording) {
+        let game = member.user.game === null ? "nothing" : member.user.game.name;
+        member.time++;
+        if (member.activities.has(game)) {
+          member.activities.set(game, member.activities.get(game) + 1);
+        } else {
+          member.activities.set(game, 1);
         }
-      });
+      }
     });
   }, 1000);
+  console.log("I am ready!");
 });
 
 discord_client.on("message", (message) => {
@@ -272,32 +280,31 @@ const command_poll = (message, args) => {
 
 const command_record = (message, args) => {
   if (args[0] === "start") {
-    active_record_map.get(message.guild.id).get(message.member.user.id).recording = true;
-    active_record_map.get(message.guild.id).get(message.member.user.id).activities.clear();
-    active_record_map.get(message.guild.id).get(message.member.user.id).time = 0;
+    if (active_record_map.has(message.author.id)) {
+      active_record_map.get(message.author.id).time = 0;
+      active_record_map.get(message.author.id).recording = true;
+      active_record_map.get(message.author.id).activities.clear();
+    } else {
+      active_record_map.set(message.author.id, {
+        user: message.author,
+        time: 0,
+        recording: true,
+        activities: new Map()
+      });
+    }
   } else if (args[0] === "stop" || args[0] === "show") {
-    if (active_record_map.get(message.guild.id).get(message.member.user.id).activities.size === 0) {
+    if (active_record_map.size === 0) {
       message.channel.send(new RichEmbed().setTitle("Nothing has been recorded yet..."));
       return;
     }
     if (args[0] === "stop") {
-      active_record_map.get(message.guild.id).get(message.member.user.id).recording = false;
+      active_record_map.get(message.author.id).recording = false;
     }
-    const embed = new RichEmbed().setTitle("In the past " + active_record_map.get(message.guild.id).get(message.member.user.id).time + " minutes, you have played...");
-    active_record_map.get(message.guild.id).get(message.member.user.id).activities.forEach((value, key) => {
-      embed.addField(key, "For " + value + " minutes");
+    const embed = new RichEmbed().setTitle(`In the past ${active_record_map.get(message.author.id).time} minutes you have done:`);
+    active_record_map.get(message.author.id).forEach((duration, name) => {
+      embed.addField(name, `For ${duration} minutes`);
     });
     message.channel.send(embed);
-  } else if (message.author.id === config.me && args[0] === "debug") {
-    // console log all
-    for (let guild of active_record_map.keys()) {
-      console.log(guild);
-      for (let member of active_record_map.get(guild).keys()) {
-        console.log(active_record_map.get(guild).get(member).username);
-        console.log(active_record_map.get(guild).get(member).activities);
-      }
-      console.log("\n");
-    }
   } else {
     message.channel.send("Bad subcommand for **" + config.prefix + "record**", help_embed);
   }
@@ -519,4 +526,8 @@ const command_db = (message, args) => {
     default:
       message.channel.send("bad command");
   }
+}
+
+const command_exec = (message, args) => {
+  // check out https://github.com/1Computer1/comp_iler
 }
