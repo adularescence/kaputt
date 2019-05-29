@@ -8,3 +8,4 @@
 
   * passive activity recording
   * containerize
+  * update help_embed
