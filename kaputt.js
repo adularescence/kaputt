@@ -53,17 +53,35 @@ let story_word_allowance = -1;
 const story_list = [];
 let story_listening = false;
 
+// deprecated soon
 // record the activities of members on my test server (for now)
 let record_member_status = false;
 const record_map = new Map();
 let minutes_since_start = 0;
+
+// active record
+let active_record_map = new Map();
 
 discord_client.on("ready", () => {
   console.log("I am ready!");
   discord_client.user.setPresence({
     game: { name: "" + config.prefix + "help for help" },
     status: "online"
-  });  
+  });
+
+  // initialize the active recording map
+  discord_client.guilds.forEach(guild => {
+    active_record_map.set(guild.id, new Map());
+    guild.members.forEach(member => {
+      active_record_map.get(guild.id).set(member.user.id, {
+        recording: false,
+        time: 0,
+        username: member.user.username,
+        activities: new Map()
+      });
+    });
+  });
+  active_record();
 });
 
 discord_client.on("message", (message) => {
@@ -147,6 +165,26 @@ discord_client.on("message", (message) => {
       break;
     case "db":
       command_db(message, args);
+      break;
+    case "test":
+      if (message.author.id !== config.me) return;
+      enable_active_record(message.guild, message.member);
+      break;
+    case "test2":
+      if (message.author.id !== config.me) return;
+      // print out the activities of the member
+      for (let guild of active_record_map.keys()) {
+        console.log(guild);
+        for (let member of active_record_map.get(guild).keys()) {
+          console.log(active_record_map.get(guild).get(member).username);
+          let activities = active_record_map.get(guild).get(member).activities;
+          if (activities.size === 0) {
+            console.log("did jack shit");
+          } else {
+            console.log(activities);
+          }
+        }
+      }
       break;
     default:
       if (cmd !== "help") {
@@ -271,6 +309,34 @@ const command_record = (message, args) => {
   }
 }
 
+const active_record = () => {
+  setInterval(async () => {
+    discord_client.guilds.forEach(guild => {
+      guild.members.forEach(member => {
+        if (active_record_map.get(guild.id).get(member.user.id).recording) {
+          let game = member.presence.game === null ? "nothing" : member.presence.game.name;
+          active_record_map.get(guild.id).get(member.user.id).time++;
+          if (active_record_map.get(guild.id).get(member.user.id).activities.has(game)) {
+            active_record_map.get(guild.id).get(member.user.id).activities.set(game, active_record_map.get(guild.id).get(member.user.id).activities.get(game) + 1);
+          } else {
+            active_record_map.get(guild.id).get(member.user.id).activities.set(game, 1);
+          }
+        }
+      });
+    });
+  }, 1000);
+}
+
+const enable_active_record = (guild, member) => {
+  active_record_map.get(guild.id).get(member.user.id).recording = true;
+  active_record_map.get(guild.id).get(member.user.id).activities.clear();
+  active_record_map.get(guild.id).get(member.user.id).time = 0;
+}
+
+const disable_active_record = (guild, member) => {
+  active_record_map.get(guild.id).get(member.user.id).recording = false;
+}
+
 const start_record = (guild) => {
   guild.members.forEach(member => record_members.push({username: member.user.username, id: member.user.id, activities: [] }));
   setInterval(async () => {
@@ -305,13 +371,13 @@ const start_record = (guild) => {
 }
 
 const command_delete = (message, args) => {
-  const limit = args.length === 0 ? 1 : args[0]++;
-  if (limit > 100) {
+  const to_be_deleted = args.length === 0 ? 1 : args[0]++;
+  if (to_be_deleted > 100) {
     message.channel.send(new RichEmbed().setDescription("You may only delete up to 99 messages at once."));
     return;
   }
   const clear = async () => {
-    const fetched = await message.channel.fetchMessages({ limit: limit });
+    const fetched = await message.channel.fetchMessages({ limit: to_be_deleted });
     message.channel.bulkDelete(fetched)
     .catch(() => {
       message.channel.send(new RichEmbed().setDescription("Some of the messages to delete are more than 2 weeks old.\nA limitation in Discord's API prevents me from deleting messages older than that!"))
@@ -435,7 +501,7 @@ const command_db = (message, args) => {
       break;
     case "insert":
       // right now, inserts user id and avatar into a table, which can be retrieved using ;db select
-      // if (message.author.id !== config.schlafen) return;
+      // if (message.author.id !== config.me) return;
       const insert_text = "INSERT INTO command_record_test (id, username, discriminator, avatar) VALUES ($1, $2, $3, $4) RETURNING *";
       const insert_values = [message.author.id, message.author.username, message.author.discriminator, message.author.avatar];
       pg_client.query(insert_text, insert_values)
