@@ -6,5 +6,5 @@
   
 ### TODO
 
-  * passive + active activity recording
+  * passive activity recording
   * containerize

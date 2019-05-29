@@ -54,13 +54,11 @@ const story_list = [];
 let story_listening = false;
 
 // deprecated soon
-// record the activities of members on my test server (for now)
-let record_member_status = false;
 const record_map = new Map();
-let minutes_since_start = 0;
 
-// active record
-let active_record_map = new Map();
+// record maps
+const active_record_map = new Map();
+const passive_record_map = new Map();
 
 discord_client.on("ready", () => {
   console.log("I am ready!");
@@ -81,7 +79,23 @@ discord_client.on("ready", () => {
       });
     });
   });
-  active_record();
+
+  // updates member status every 1 sec
+  setInterval(async () => {
+    discord_client.guilds.forEach(guild => {
+      guild.members.forEach(member => {
+        if (active_record_map.get(guild.id).get(member.user.id).recording) {
+          let game = member.presence.game === null ? "nothing" : member.presence.game.name;
+          active_record_map.get(guild.id).get(member.user.id).time++;
+          if (active_record_map.get(guild.id).get(member.user.id).activities.has(game)) {
+            active_record_map.get(guild.id).get(member.user.id).activities.set(game, active_record_map.get(guild.id).get(member.user.id).activities.get(game) + 1);
+          } else {
+            active_record_map.get(guild.id).get(member.user.id).activities.set(game, 1);
+          }
+        }
+      });
+    });
+  }, 1000);
 });
 
 discord_client.on("message", (message) => {
@@ -149,7 +163,6 @@ discord_client.on("message", (message) => {
     case "bye":
       message.channel.send(new RichEmbed().setDescription("<@" + message.author.id + "> killed me!"))
       .then(() => {
-        record_member_status = false;
         console.log(message.author.username + " killed me!");
         discord_client.destroy();
         process.exit(0);
@@ -167,25 +180,13 @@ discord_client.on("message", (message) => {
       command_db(message, args);
       break;
     case "test":
-      if (message.author.id !== config.me) return;
-      enable_active_record(message.guild, message.member);
-      break;
-    case "test2":
-      if (message.author.id !== config.me) return;
-      // print out the activities of the member
-      for (let guild of active_record_map.keys()) {
-        console.log(guild);
-        for (let member of active_record_map.get(guild).keys()) {
-          console.log(active_record_map.get(guild).get(member).username);
-          let activities = active_record_map.get(guild).get(member).activities;
-          if (activities.size === 0) {
-            console.log("did jack shit");
-          } else {
-            console.log(activities);
-          }
-        }
+      if (message.author.id !== config.me) {
+        console.log("does nothing lol");
       }
-      break;
+    case "test2":
+      if (message.author.id === config.me) {
+        console.log("does nothing lol");
+      }
     default:
       if (cmd !== "help") {
         message.channel.send(`Bad command: **${config.prefix}${cmd}**`, help_embed);
@@ -213,8 +214,8 @@ discord_client.on("messageReactionRemove", (messageReaction, user) => {
   messageReaction.message.channel.send("user " + user.username + " removed reaction " + messageReaction.emoji + " from message " + messageReaction.message.content);
 });
 
-// Command functions
 
+// Command functions
 const command_poll = (message, args) => {
   const options = [];
   // parse multi-word quoted options and get options
@@ -271,103 +272,35 @@ const command_poll = (message, args) => {
 
 const command_record = (message, args) => {
   if (args[0] === "start") {
-    if (message.guild.id !== config.test_guild) {
-      message.channel.send(new RichEmbed().setTitle("Sorry, right now recording available only for my test server."));
-      return;
-    }
-    record_member_status = true;
-    console.log(message.guild.name);
-    start_record(message.guild);
-    // const guilds = discord_client.guilds.array();
-    // for (let i = 0; i < guilds.length; i++) {
-    //   if (guilds[i].id == message.guild.id) {
-    //     // TODO debug
-    //     console.log(guilds[i].name);
-    //     record_member_status = true;
-    //     start_record(guilds[i]);
-    //   }
-    // }
+    active_record_map.get(message.guild.id).get(message.member.user.id).recording = true;
+    active_record_map.get(message.guild.id).get(message.member.user.id).activities.clear();
+    active_record_map.get(message.guild.id).get(message.member.user.id).time = 0;
   } else if (args[0] === "stop" || args[0] === "show") {
-    if (record_members.length === 0) {
+    if (active_record_map.get(message.guild.id).get(message.member.user.id).activities.size === 0) {
       message.channel.send(new RichEmbed().setTitle("Nothing has been recorded yet..."));
       return;
     }
     if (args[0] === "stop") {
-      record_member_status = false;
+      active_record_map.get(message.guild.id).get(message.member.user.id).recording = false;
     }
-    const embed = new RichEmbed().setTitle("In the past " + minutes_since_start + " minutes, the members on this server have played...");
-    record_members.forEach(member => {
-      let text = "";
-      member.activities.forEach(activity => {
-        text += activity.name + " for " + activity.duration + "\n";
-      });
-      embed.addField(member.username, text);
+    const embed = new RichEmbed().setTitle("In the past " + active_record_map.get(message.guild.id).get(message.member.user.id).time + " minutes, you have played...");
+    active_record_map.get(message.guild.id).get(message.member.user.id).activities.forEach((value, key) => {
+      embed.addField(key, "For " + value + " minutes");
     });
     message.channel.send(embed);
+  } else if (message.author.id === config.me && args[0] === "debug") {
+    // console log all
+    for (let guild of active_record_map.keys()) {
+      console.log(guild);
+      for (let member of active_record_map.get(guild).keys()) {
+        console.log(active_record_map.get(guild).get(member).username);
+        console.log(active_record_map.get(guild).get(member).activities);
+      }
+      console.log("\n");
+    }
   } else {
     message.channel.send("Bad subcommand for **" + config.prefix + "record**", help_embed);
   }
-}
-
-const active_record = () => {
-  setInterval(async () => {
-    discord_client.guilds.forEach(guild => {
-      guild.members.forEach(member => {
-        if (active_record_map.get(guild.id).get(member.user.id).recording) {
-          let game = member.presence.game === null ? "nothing" : member.presence.game.name;
-          active_record_map.get(guild.id).get(member.user.id).time++;
-          if (active_record_map.get(guild.id).get(member.user.id).activities.has(game)) {
-            active_record_map.get(guild.id).get(member.user.id).activities.set(game, active_record_map.get(guild.id).get(member.user.id).activities.get(game) + 1);
-          } else {
-            active_record_map.get(guild.id).get(member.user.id).activities.set(game, 1);
-          }
-        }
-      });
-    });
-  }, 1000);
-}
-
-const enable_active_record = (guild, member) => {
-  active_record_map.get(guild.id).get(member.user.id).recording = true;
-  active_record_map.get(guild.id).get(member.user.id).activities.clear();
-  active_record_map.get(guild.id).get(member.user.id).time = 0;
-}
-
-const disable_active_record = (guild, member) => {
-  active_record_map.get(guild.id).get(member.user.id).recording = false;
-}
-
-const start_record = (guild) => {
-  guild.members.forEach(member => record_members.push({username: member.user.username, id: member.user.id, activities: [] }));
-  setInterval(async () => {
-    if (record_member_status == false) { 
-      return;
-    }
-    minutes_since_start++;
-    guild.members.forEach(guild_member => {
-      let game = guild_member.presence.game;
-      game = game === null ? "nothing": game.name;
-      let newGame = true;
-      record_members.forEach(member => {
-        if (member.id === guild_member.id) {
-          for (let i = 0; i < member.activities.length; i++) {
-            if (member.activities[i].name === game) {
-              newGame = false;
-              member.activities[i].duration++;
-            }
-          }
-          if (newGame) {
-            member.activities.push({
-              "name": game,
-              "duration": 1
-            });
-          }
-        }
-      });
-    });
-    // call the ;db update code here
-    //bogus_code(guild);
-  }, 60000);
 }
 
 const command_delete = (message, args) => {
@@ -492,6 +425,8 @@ const command_nh = (message, args) => {
 }
 
 const command_db = (message, args) => {
+  console.log("fixing rn");
+  return;
   switch (args[0]) {
     case "select":
       // shows all the avatars collected from ;db insert
